@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Liveness Detection</title>
+    <script src="https://unpkg.com/@tensorflow/tfjs"></script>
+    <script src="https://unpkg.com/@tensorflow-models/face-landmarks-detection"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .glass-morphism {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        }
+        body {
+            background: linear-gradient(45deg, #4158D0, #C850C0, #FFCC70);
+            background-size: 400% 400%;
+            animation: gradient 15s ease infinite;
+            min-height: 100vh;
+        }
+        @keyframes gradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+    <div class="glass-morphism p-8 w-full max-w-md">
+        <h1 class="text-3xl font-bold text-white text-center mb-6">Face Liveness Detection</h1>
+        
+        <div class="relative mb-6">
+            <video id="video" class="w-full rounded-lg" autoplay muted></video>
+            <canvas id="canvas" class="absolute top-0 left-0 w-full h-full"></canvas>
+        </div>
+
+        <div class="glass-morphism p-4 mb-6">
+            <h2 class="text-white text-xl mb-2">Please read this captcha:</h2>
+            <div id="captchaText" class="text-2xl font-bold text-white text-center mb-2"></div>
+        </div>
+
+        <div class="text-center">
+            <button id="startButton" class="bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-2 px-6 rounded-lg transition-colors">
+                Start Verification
+            </button>
+        </div>
+
+        <div id="status" class="mt-4 text-center text-white"></div>
+    </div>
+
+    <script>
+        let model;
+        let captchaValue;
+        let isProcessing = false;
+        let lipMotionCount = 0;
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const startButton = document.getElementById('startButton');
+        const statusDiv = document.getElementById('status');
+
+        // Generate random captcha
+        function generateCaptcha() {
+            const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            let captcha = '';
+            for (let i = 0; i < 6; i++) {
+                captcha += chars[Math.floor(Math.random() * chars.length)];
+            }
+            document.getElementById('captchaText').textContent = captcha;
+            return captcha;
+        }
+
+        // Initialize camera
+        async function setupCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user' },
+                audio: false
+            });
+            video.srcObject = stream;
+            
+            return new Promise((resolve) => {
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    resolve();
+                };
+            });
+        }
+
+        // Load face landmarks detection model
+        async function loadModel() {
+            model = await faceLandmarksDetection.load(
+                faceLandmarksDetection.SupportedPackages.mediapipeFacemesh
+            );
+        }
+
+        // Detect face landmarks and lip motion
+        async function detectLipMotion() {
+            if (!isProcessing) return;
+
+            const predictions = await model.estimateFaces({
+                input: video,
+                returnTensors: false,
+                flipHorizontal: false,
+                predictIrises: false
+            });
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (predictions.length > 0) {
+                const face = predictions[0];
+                const upperLip = face.annotations.lipsUpperOuter;
+                const lowerLip = face.annotations.lipsLowerOuter;
+
+                // Calculate lip distance
+                const lipDistance = Math.abs(upperLip[5][1] - lowerLip[5][1]);
+                
+                if (lipDistance > 5) { // Threshold for lip movement
+                    lipMotionCount++;
+                    statusDiv.textContent = `Lip motion detected: ${lipMotionCount}/10`;
+                }
+
+                if (lipMotionCount >= 10) {
+                    isProcessing = false;
+                    statusDiv.textContent = "Verification successful! Liveness confirmed.";
+                    statusDiv.className = "mt-4 text-center text-green-400";
+                    startButton.textContent = "Restart Verification";
+                    startButton.disabled = false;
+                }
+            }
+
+            if (isProcessing) {
+                requestAnimationFrame(detectLipMotion);
+            }
+        }
+
+        // Start verification process
+        startButton.addEventListener('click', async () => {
+            if (isProcessing) return;
+
+            try {
+                if (!model) {
+                    statusDiv.textContent = "Loading model...";
+                    await loadModel();
+                }
+
+                if (!video.srcObject) {
+                    await setupCamera();
+                }
+
+                captchaValue = generateCaptcha();
+                lipMotionCount = 0;
+                isProcessing = true;
+                startButton.disabled = true;
+                statusDiv.textContent = "Please read the captcha out loud";
+                detectLipMotion();
+            } catch (error) {
+                console.error('Error:', error);
+                statusDiv.textContent = "Error: Could not access camera";
+                statusDiv.className = "mt-4 text-center text-red-400";
+            }
+        });
+
+        // Initial setup
+        setupCamera().catch(error => {
+            console.error('Error:', error);
+            statusDiv.textContent = "Error: Could not access camera";
+            statusDiv.className = "mt-4 text-center text-red-400";
+        });
+    </script>
+<script>document.body.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); return }, { passive: false })</script>
+	</body>
+</html>
